@@ -1,13 +1,20 @@
 use binary_serde::{BinarySerde, Endianness};
 use scanf::sscanf;
+use std::fs::File;
 use std::io::{stdin, stdout, BufRead, Write};
+use std::os::unix::prelude::FileExt;
 use std::process::exit;
+
+use rs_sqlite::{
+    Row, EXIT_FAILURE, EXIT_SUCCESS, PAGE_SIZE, ROWS_PER_PAGE, ROW_SIZE, TABLE_MAX_PAGES,
+    TABLE_MAX_ROWS,
+};
 
 fn main() {
     let stdin = stdin();
     print_prompt();
     let _ = stdout().flush();
-    let mut table = Table::new();
+    let mut table = Table::db_open("test.db");
     for line in stdin.lock().lines() {
         let Ok(line) = line else {
             break;
@@ -36,66 +43,6 @@ enum StatementType {
     Select,
     Insert,
     Unknown,
-}
-
-#[repr(C)]
-#[derive(Debug, BinarySerde)]
-struct Row {
-    id: u32,
-    username: Username,
-    email: Email,
-}
-
-impl std::fmt::Display for Row {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "({}, {}, {})", self.id, self.username, self.email)
-    }
-}
-
-#[derive(Debug, BinarySerde, Clone, Eq, PartialEq, Hash)]
-struct Username([u8; 32]);
-
-impl std::fmt::Display for Username {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "{}",
-            String::from_utf8(self.0.to_vec())
-                .unwrap()
-                .replace('\0', "")
-        )
-    }
-}
-
-impl From<String> for Username {
-    fn from(s: String) -> Self {
-        let mut arr = [0u8; 32];
-        s.bytes().zip(arr.iter_mut()).for_each(|(b, ptr)| *ptr = b);
-        Username(arr)
-    }
-}
-
-#[derive(Debug, BinarySerde, Clone, Eq, PartialEq, Hash)]
-struct Email([u8; 255]);
-
-impl std::fmt::Display for Email {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "{}",
-            String::from_utf8(self.0.to_vec())
-                .unwrap()
-                .replace('\0', "")
-        )
-    }
-}
-
-impl From<String> for Email {
-    fn from(s: String) -> Self {
-        let mut arr = [0u8; 255];
-        s.bytes().zip(arr.iter_mut()).for_each(|(b, ptr)| *ptr = b);
-        Email(arr)
-    }
 }
 
 #[derive(Debug)]
@@ -145,27 +92,19 @@ fn print_prompt() {
     print!("db > ");
 }
 
-const PAGE_SIZE: usize = 4096;
-const TABLE_MAX_PAGES: usize = 100;
-// ROW_SIZE = 291
-const ROW_SIZE: usize = <Row as BinarySerde>::MAX_SERIALIZED_SIZE;
-// ROWS_PER_PAGE 每个页到底有多少行, 291是计算Row结构体的所有字段的总长度
-const ROWS_PER_PAGE: usize = PAGE_SIZE / ROW_SIZE;
-// TABLE_MAX_ROWS 表最大行数
-const TABLE_MAX_ROWS: usize = ROWS_PER_PAGE * TABLE_MAX_PAGES;
-
 struct Table {
     num_rows: usize,
-    pages: [Option<[u8; PAGE_SIZE]>; TABLE_MAX_PAGES],
+    // pages: [Option<[u8; PAGE_SIZE]>; TABLE_MAX_PAGES],
+    pager: Pager,
 }
 
 impl Table {
-    pub fn new() -> Self {
-        Self {
-            num_rows: 0,
-            pages: [None; TABLE_MAX_PAGES],
-        }
+    pub fn db_open(filename: &str) -> Table {
+        let pager = Pager::open(filename).unwrap();
+        let num_rows = (pager.file_length as usize) / ROW_SIZE;
+        Self { num_rows, pager }
     }
+
     fn page_num(&self, row_num: usize) -> usize {
         row_num / ROWS_PER_PAGE
     }
@@ -188,28 +127,20 @@ impl Table {
         let mut insert_data = [0u8; ROW_SIZE];
         row.binary_serialize(&mut insert_data, Endianness::Big);
         let mut offset = self.row_solt(self.num_rows);
-        let mut page = [0u8; PAGE_SIZE];
-        let page_option = self.pages[self.page_num(self.num_rows)];
-        if page_option.is_some() {
-            page = page_option.unwrap();
-        }
+        let mut page = self.pager.get_page(self.page_num(self.num_rows));
         for i in 0..insert_data.len() {
             page[offset] = insert_data[i];
             offset += 1;
         }
-        self.pages[self.page_num(self.num_rows)] = Some(page);
+        // self.pages[self.page_num(self.num_rows)] = Some(page);
 
         self.num_rows += 1;
         ExecuteResult::Success
     }
 
-    fn select(&self, _statement: &Statement) -> ExecuteResult {
+    fn select(&mut self, _statement: &Statement) -> ExecuteResult {
         for i in 0..self.num_rows {
-            let page_option = self.pages[self.page_num(i)];
-            if page_option.is_none() {
-                continue;
-            }
-            let page = page_option.unwrap();
+            let page = self.pager.get_page(self.page_num(i));
             let offset = self.row_solt(i);
             let select_data = page[offset..offset + ROW_SIZE].to_vec();
             let row = Row::binary_deserialize(&select_data, Endianness::Big).unwrap();
@@ -228,9 +159,7 @@ impl Table {
     }
 
     pub fn free(&mut self) {
-        for i in 0..self.pages.len() {
-            self.pages[i] = None;
-        }
+        self.pager.free()
     }
 
     pub fn run(&mut self, src: &str) {
@@ -238,7 +167,7 @@ impl Table {
             match src {
                 ".exit" => {
                     println!("Bye~");
-                    exit(0);
+                    exit(EXIT_SUCCESS);
                 }
                 _ => {
                     println!("Unrecognized command {}", src);
@@ -281,4 +210,59 @@ enum ExecuteResult {
     TableFull,
     NoExecute,
     Success,
+}
+
+struct Pager {
+    pub file_descriptor: File,
+    pub file_length: usize,
+    pub pages: [Option<Page>; TABLE_MAX_PAGES],
+}
+
+type Page = [u8; PAGE_SIZE];
+
+impl Pager {
+    pub fn open(filename: &str) -> std::io::Result<Self> {
+        let file = File::open(filename)?;
+        let file_length = file.metadata().unwrap().len() as usize;
+        Ok(Self {
+            file_descriptor: file,
+            file_length,
+            pages: [None; TABLE_MAX_PAGES],
+        })
+    }
+
+    pub fn get_page(&mut self, page_num: usize) -> Page {
+        if page_num > TABLE_MAX_PAGES {
+            println!(
+                "Tried to fetch page number out of bounds. {} > {}",
+                page_num, TABLE_MAX_PAGES
+            );
+            exit(EXIT_FAILURE);
+        }
+        let Some(page) = self.pages[page_num] else {
+            // Cache miss. Allocate memory and load from file.
+            let mut num_pages = self.file_length / PAGE_SIZE;
+
+            // We might save a partial page at the end of the file
+            if (self.file_length % PAGE_SIZE) > 0 {
+                num_pages += 1;
+            }
+            // 读取指定数据
+            let mut page: Page = [0u8; PAGE_SIZE];
+            if page_num <= num_pages {
+                let offset = (page_num * PAGE_SIZE) as u64;
+                self.file_descriptor.read_exact_at(&mut page, offset).unwrap();
+            }
+            self.pages[page_num] = Some(page);
+            return page
+        };
+
+        page
+    }
+
+    pub fn free(&mut self) {
+        for i in 0..self.pages.len() {
+            self.pages[i] = None;
+        }
+    }
 }
