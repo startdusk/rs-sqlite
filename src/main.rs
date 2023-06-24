@@ -1,8 +1,7 @@
 use binary_serde::{BinarySerde, Endianness};
+use scanf::sscanf;
 use std::io::{stdin, stdout, BufRead, Write};
 use std::process::exit;
-use std::str::FromStr;
-use text_io::scan;
 
 fn main() {
     let stdin = stdin();
@@ -17,7 +16,6 @@ fn main() {
             break;
         }
 
-        // TODO: process
         table.run(&line.trim().to_lowercase());
 
         print_prompt();
@@ -29,6 +27,8 @@ enum PrepareResult {
     Success,
     UnrecognizedStatement,
     SyntaxError,
+    ParseStringTooLong,
+    ParseNegativeId,
 }
 
 #[derive(Debug)]
@@ -52,14 +52,14 @@ impl std::fmt::Display for Row {
     }
 }
 
-#[derive(Debug, BinarySerde)]
+#[derive(Debug, BinarySerde, Clone, Eq, PartialEq, Hash)]
 struct Username([u8; 32]);
 
 impl std::fmt::Display for Username {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "{:?}",
+            "{}",
             String::from_utf8(self.0.to_vec())
                 .unwrap()
                 .replace('\0', "")
@@ -67,27 +67,22 @@ impl std::fmt::Display for Username {
     }
 }
 
-impl FromStr for Username {
-    type Err = String;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
+impl From<String> for Username {
+    fn from(s: String) -> Self {
         let mut arr = [0u8; 32];
-        if s.len() > arr.len() {
-            return Err("插入username错误".to_string());
-        }
         s.bytes().zip(arr.iter_mut()).for_each(|(b, ptr)| *ptr = b);
-        Ok(Username(arr))
+        Username(arr)
     }
 }
 
-#[derive(Debug, BinarySerde)]
+#[derive(Debug, BinarySerde, Clone, Eq, PartialEq, Hash)]
 struct Email([u8; 255]);
 
 impl std::fmt::Display for Email {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "{:?}",
+            "{}",
             String::from_utf8(self.0.to_vec())
                 .unwrap()
                 .replace('\0', "")
@@ -95,16 +90,11 @@ impl std::fmt::Display for Email {
     }
 }
 
-impl FromStr for Email {
-    type Err = String;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
+impl From<String> for Email {
+    fn from(s: String) -> Self {
         let mut arr = [0u8; 255];
-        if s.len() > arr.len() {
-            return Err("插入email错误".to_string());
-        }
         s.bytes().zip(arr.iter_mut()).for_each(|(b, ptr)| *ptr = b);
-        Ok(Email(arr))
+        Email(arr)
     }
 }
 
@@ -122,15 +112,25 @@ fn prepare_statement(src: &str, statement: &mut Statement) -> PrepareResult {
     match &src[0..6] {
         "insert" => {
             statement.typ = StatementType::Insert;
-            let id: u32;
-            let username: Username;
-            let email: Email;
-            scan!(src.bytes() => "insert {} {} {}", id, username, email);
+            let mut id: i32 = 0;
+            let mut username: String = String::new();
+            let mut email: String = String::new();
+            if let Err(_) = sscanf!(src, "insert {} {} {}", id, username, email) {
+                return PrepareResult::SyntaxError;
+            }
+
+            if id < 0 {
+                return PrepareResult::ParseNegativeId;
+            }
+            if username.len() > 32 || email.len() > 255 {
+                return PrepareResult::ParseStringTooLong;
+            }
+
             statement.row = Some(Row {
-                id,
-                username,
-                email,
-            })
+                id: id.try_into().unwrap(),
+                username: username.into(),
+                email: email.into(),
+            });
         }
         "select" => statement.typ = StatementType::Select,
         _ => {
@@ -177,12 +177,12 @@ impl Table {
     }
 
     fn insert(&mut self, statement: &Statement) -> ExecuteResult {
-        if self.num_rows >= TABLE_MAX_PAGES {
+        if self.num_rows >= TABLE_MAX_ROWS {
             return ExecuteResult::TableFull;
         }
 
         let Some(row) = &statement.row else {
-            return ExecuteResult::NoExecute
+            return ExecuteResult::NoExecute;
         };
 
         let mut insert_data = [0u8; ROW_SIZE];
@@ -219,17 +219,11 @@ impl Table {
         ExecuteResult::Success
     }
 
-    pub fn execute_statement(&mut self, statement: &Statement) {
+    pub fn execute_statement(&mut self, statement: &Statement) -> ExecuteResult {
         match statement.typ {
-            StatementType::Insert => {
-                self.insert(statement);
-            }
-            StatementType::Select => {
-                self.select(statement);
-            }
-            StatementType::Unknown => {
-                println!("Unknown statement")
-            }
+            StatementType::Insert => self.insert(statement),
+            StatementType::Select => self.select(statement),
+            StatementType::Unknown => ExecuteResult::NoExecute,
         }
     }
 
@@ -258,15 +252,26 @@ impl Table {
             row: None,
         };
         match prepare_statement(src, &mut statement) {
-            PrepareResult::Success => {
-                self.execute_statement(&statement);
-                println!("Executed.");
-            }
+            PrepareResult::Success => match self.execute_statement(&statement) {
+                ExecuteResult::Success => {
+                    println!("Executed.");
+                }
+                ExecuteResult::TableFull => {
+                    println!("Error: Table full.")
+                }
+                ExecuteResult::NoExecute => {}
+            },
             PrepareResult::UnrecognizedStatement => {
                 println!("Unrecognized keyword at start of '{}'.", src);
             }
             PrepareResult::SyntaxError => {
                 println!("Syntax error. Could not parse statement.");
+            }
+            PrepareResult::ParseStringTooLong => {
+                println!("String is too long.")
+            }
+            PrepareResult::ParseNegativeId => {
+                println!("ID must be positive.")
             }
         }
     }
