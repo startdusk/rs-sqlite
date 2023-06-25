@@ -70,3 +70,4 @@ impl From<String> for Email {
         Email(arr)
     }
 }
+
