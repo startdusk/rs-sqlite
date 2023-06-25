@@ -1,11 +1,16 @@
 describe "database" do
     before do
         `cargo b -r`
+        `rm -rf test.db`
     end
     
+    after(:context) do
+        `rm -rf test.db`
+    end
+
     def run_script(commands)
         raw_output = nil
-        IO.popen("./target/release/rs-sqlite", "r+") do |pipe|
+        IO.popen("./target/release/rs-sqlite test.db", "r+") do |pipe|
             commands.each do |command|
                 begin
                     pipe.puts command
@@ -106,9 +111,10 @@ describe "database" do
             ".exit",
         ])
         expect(result2).to eq([
-            "db > (1 user1, person1@example.com)",
+            "db > (1, user1, person1@example.com)",
             "Executed.",
             "db > Bye~",
         ])
     end
+
 end
