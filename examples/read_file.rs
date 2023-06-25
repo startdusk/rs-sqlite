@@ -8,7 +8,7 @@ fn main() -> io::Result<()> {
     let file = File::open("./foo.test.txt")?;
 
     // We now read exactly 8 bytes from the offset 10.
-    file.read_exact_at(&mut buf, 10)?;
+    file.read_at(&mut buf, 10)?;
     println!(
         "read {} bytes: {:?}",
         buf.len(),

@@ -1,9 +1,8 @@
 use binary_serde::{BinarySerde, Endianness};
-use core::num;
 use scanf::sscanf;
 use std::env::args;
 use std::fs::File;
-use std::io::{stdin, stdout, BufRead, Seek, Write};
+use std::io::{stdin, stdout, BufRead, Write};
 use std::os::unix::prelude::FileExt;
 use std::process::exit;
 
