@@ -1,7 +1,9 @@
 use binary_serde::{BinarySerde, Endianness};
+use core::num;
 use scanf::sscanf;
+use std::env::args;
 use std::fs::File;
-use std::io::{stdin, stdout, BufRead, Write};
+use std::io::{stdin, stdout, BufRead, Seek, Write};
 use std::os::unix::prelude::FileExt;
 use std::process::exit;
 
@@ -11,10 +13,18 @@ use rs_sqlite::{
 };
 
 fn main() {
+    let args: Vec<String> = args().collect();
+    if args.len() < 2 {
+        println!("Must supply a database filename.");
+        exit(EXIT_FAILURE);
+    }
+
+    let filename = &args[1];
+
     let stdin = stdin();
     print_prompt();
     let _ = stdout().flush();
-    let mut table = Table::db_open("test.db");
+    let mut table = Table::db_open(&filename);
     for line in stdin.lock().lines() {
         let Ok(line) = line else {
             break;
@@ -105,16 +115,6 @@ impl Table {
         Self { num_rows, pager }
     }
 
-    fn page_num(&self, row_num: usize) -> usize {
-        row_num / ROWS_PER_PAGE
-    }
-
-    fn row_solt(&self, row_num: usize) -> usize {
-        let row_offset = row_num % ROWS_PER_PAGE;
-        let byte_offset = row_offset * ROW_SIZE;
-        byte_offset
-    }
-
     fn insert(&mut self, statement: &Statement) -> ExecuteResult {
         if self.num_rows >= TABLE_MAX_ROWS {
             return ExecuteResult::TableFull;
@@ -125,14 +125,8 @@ impl Table {
         };
 
         let mut insert_data = [0u8; ROW_SIZE];
-        row.binary_serialize(&mut insert_data, Endianness::Big);
-        let mut offset = self.row_solt(self.num_rows);
-        let mut page = self.pager.get_page(self.page_num(self.num_rows));
-        for i in 0..insert_data.len() {
-            page[offset] = insert_data[i];
-            offset += 1;
-        }
-        // self.pages[self.page_num(self.num_rows)] = Some(page);
+        row.binary_serialize(&mut insert_data, Endianness::Little);
+        self.pager.save_row(self.num_rows, insert_data);
 
         self.num_rows += 1;
         ExecuteResult::Success
@@ -140,10 +134,10 @@ impl Table {
 
     fn select(&mut self, _statement: &Statement) -> ExecuteResult {
         for i in 0..self.num_rows {
-            let page = self.pager.get_page(self.page_num(i));
-            let offset = self.row_solt(i);
+            let page = self.pager.get_page(i);
+            let offset = self.pager.offset(i);
             let select_data = page[offset..offset + ROW_SIZE].to_vec();
-            let row = Row::binary_deserialize(&select_data, Endianness::Big).unwrap();
+            let row = Row::binary_deserialize(&select_data, Endianness::Little).unwrap();
             println!("{}", row);
         }
 
@@ -166,6 +160,7 @@ impl Table {
         if src.starts_with(".") {
             match src {
                 ".exit" => {
+                    self.free();
                     println!("Bye~");
                     exit(EXIT_SUCCESS);
                 }
@@ -222,7 +217,13 @@ type Page = [u8; PAGE_SIZE];
 
 impl Pager {
     pub fn open(filename: &str) -> std::io::Result<Self> {
-        let file = File::open(filename)?;
+        let file = File::options()
+            .write(true)
+            .create(true)
+            .append(true)
+            .read(true)
+            .open(filename)?;
+
         let file_length = file.metadata().unwrap().len() as usize;
         Ok(Self {
             file_descriptor: file,
@@ -231,7 +232,27 @@ impl Pager {
         })
     }
 
-    pub fn get_page(&mut self, page_num: usize) -> Page {
+    pub fn save_row(&mut self, row_num: usize, row: [u8; ROW_SIZE]) {
+        let page_num = self.page_num(row_num);
+        if page_num > TABLE_MAX_PAGES {
+            println!(
+                "Tried to fetch page number out of bounds. {} > {}",
+                page_num, TABLE_MAX_PAGES
+            );
+            exit(EXIT_FAILURE);
+        }
+        let mut offset = self.offset(row_num);
+        self.file_descriptor.write_at(&row, offset as u64).unwrap();
+        let mut page = self.get_page(row_num);
+        for i in 0..row.len() {
+            page[offset] = row[i];
+            offset += 1;
+        }
+        self.pages[page_num] = Some(page);
+    }
+
+    pub fn get_page(&mut self, row_num: usize) -> Page {
+        let page_num = self.page_num(row_num);
         if page_num > TABLE_MAX_PAGES {
             println!(
                 "Tried to fetch page number out of bounds. {} > {}",
@@ -249,9 +270,9 @@ impl Pager {
             }
             // 读取指定数据
             let mut page: Page = [0u8; PAGE_SIZE];
-            if page_num <= num_pages {
+            if num_pages > 0 && page_num <= num_pages {
                 let offset = (page_num * PAGE_SIZE) as u64;
-                self.file_descriptor.read_exact_at(&mut page, offset).unwrap();
+                self.file_descriptor.read_at(&mut page,  offset).unwrap();
             }
             self.pages[page_num] = Some(page);
             return page
@@ -264,5 +285,15 @@ impl Pager {
         for i in 0..self.pages.len() {
             self.pages[i] = None;
         }
+    }
+
+    pub fn page_num(&self, row_num: usize) -> usize {
+        row_num / ROWS_PER_PAGE
+    }
+
+    pub fn offset(&self, row_num: usize) -> usize {
+        let row_offset = row_num % ROWS_PER_PAGE;
+        let byte_offset = row_offset * ROW_SIZE;
+        byte_offset
     }
 }
