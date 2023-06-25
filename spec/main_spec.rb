@@ -4,7 +4,7 @@ describe "database" do
         `rm -rf test.db`
     end
     
-    after(:context) do
+    after(:all) do
         `rm -rf test.db`
     end
 
