@@ -1,7 +1,7 @@
 use std::process::exit;
 
 use binary_serde::{BinarySerde, Endianness};
-use rs_sqlite::{Row, EXIT_SUCCESS, ROW_SIZE, TABLE_MAX_ROWS};
+use rs_sqlite::{to_u8_array, Row, EXIT_SUCCESS, ROW_SIZE, TABLE_MAX_ROWS};
 use scanf::sscanf;
 
 use crate::Pager;
@@ -40,7 +40,7 @@ pub struct Table {
 impl Table {
     pub fn db_open(filename: &str) -> Table {
         let pager = Pager::open(filename).unwrap();
-        let num_rows = (pager.file_length as usize) / ROW_SIZE;
+        let num_rows = pager.file_length / ROW_SIZE;
         Self { num_rows, pager }
     }
 
@@ -84,7 +84,7 @@ impl Table {
     }
 
     pub fn run(&mut self, src: &str) {
-        if src.starts_with(".") {
+        if src.starts_with('.') {
             match src {
                 ".exit" => {
                     self.free();
@@ -139,7 +139,7 @@ fn prepare_statement(src: &str, statement: &mut Statement) -> PrepareResult {
             let mut id: i32 = 0;
             let mut username: String = String::new();
             let mut email: String = String::new();
-            if let Err(_) = sscanf!(src, "insert {} {} {}", id, username, email) {
+            if sscanf!(src, "insert {} {} {}", id, username, email).is_err() {
                 return PrepareResult::SyntaxError;
             }
 
@@ -152,8 +152,8 @@ fn prepare_statement(src: &str, statement: &mut Statement) -> PrepareResult {
 
             statement.row = Some(Row {
                 id: id.try_into().unwrap(),
-                username: username.into(),
-                email: email.into(),
+                username: to_u8_array::<32>(&username),
+                email: to_u8_array::<255>(&email),
             });
         }
         "select" => statement.typ = StatementType::Select,

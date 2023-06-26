@@ -56,7 +56,7 @@ impl Pager {
             );
             exit(EXIT_FAILURE);
         }
-        let mut offset = self.offset(row_num);
+        let offset = self.offset(row_num);
 
         #[cfg(target_family = "unix")]
         self.file_descriptor.write_at(&row, offset as u64).unwrap();
@@ -67,10 +67,7 @@ impl Pager {
             .unwrap();
 
         let mut page = self.get_page(row_num);
-        for i in 0..row.len() {
-            page[offset] = row[i];
-            offset += 1;
-        }
+        page[offset..(row.len() + offset)].copy_from_slice(&row[..]);
         self.pages[page_num] = Some(page);
     }
 
@@ -97,7 +94,6 @@ impl Pager {
                 let offset = (page_num * PAGE_SIZE) as u64;
                 #[cfg(target_family = "unix")]
                 self.file_descriptor.read_at(&mut page,  offset).unwrap();
-                
                 #[cfg(target_family = "windows")]
                 self.file_descriptor.seek_read(&mut page,  offset).unwrap();
             }
@@ -135,7 +131,6 @@ impl Pager {
 
     fn offset(&self, row_num: usize) -> usize {
         let row_offset = row_num % ROWS_PER_PAGE;
-        let byte_offset = row_offset * ROW_SIZE;
-        byte_offset
+        row_offset * ROW_SIZE
     }
 }

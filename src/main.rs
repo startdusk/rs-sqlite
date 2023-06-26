@@ -21,7 +21,7 @@ fn main() {
     let stdin = stdin();
     print_prompt();
     let _ = stdout().flush();
-    let mut table = Table::db_open(&filename);
+    let mut table = Table::db_open(filename);
     for line in stdin.lock().lines() {
         let Ok(line) = line else {
             break;
