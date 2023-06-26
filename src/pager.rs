@@ -13,21 +13,6 @@ pub struct Pager {
     pub pages: [Option<Page>; TABLE_MAX_PAGES],
 }
 
-pub struct RowType([u8; ROW_SIZE]);
-
-impl TryFrom<Vec<u8>> for RowType {
-    type Error = String;
-
-    fn try_from(v: Vec<u8>) -> Result<Self, Self::Error> {
-        let slice = v.as_slice();
-        let array: [u8; ROW_SIZE] = match slice.try_into() {
-            Ok(ba) => ba,
-            Err(_) => panic!("Expected a Vec of length {} but it was {}", 32, v.len()),
-        };
-        Ok(RowType(array))
-    }
-}
-
 pub type Page = [u8; PAGE_SIZE];
 
 impl Pager {
