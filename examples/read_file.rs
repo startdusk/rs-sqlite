@@ -3,7 +3,7 @@ use std::io;
 #[cfg(target_family = "unix")]
 use std::os::unix::prelude::FileExt;
 #[cfg(target_family = "windows")]
-use std::os::windws::prelude::FileExt;
+use std::os::windows::prelude::FileExt;
 
 // 读取一个文件, 从偏移位置开始读取数据, 读够8个字节
 fn main() -> io::Result<()> {

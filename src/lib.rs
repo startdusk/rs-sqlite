@@ -3,7 +3,10 @@ use binary_serde::BinarySerde;
 pub const EXIT_SUCCESS: i32 = 0;
 pub const EXIT_FAILURE: i32 = -1;
 pub const PAGE_SIZE: usize = 4096;
-pub const TABLE_MAX_PAGES: usize = 100;
+
+// windows 的栈要比 unix 的要小, 所以windows下设为10, 而unix系统可以设为100大些
+pub const TABLE_MAX_PAGES: usize = 10;
+
 // ROW_SIZE = 291
 pub const ROW_SIZE: usize = <Row as BinarySerde>::MAX_SERIALIZED_SIZE;
 // ROWS_PER_PAGE 每个页到底有多少行, 291是计算Row结构体的所有字段的总长度

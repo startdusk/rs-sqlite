@@ -3,7 +3,7 @@ use std::{fs::File, process::exit};
 #[cfg(target_family = "unix")]
 use std::os::unix::prelude::FileExt;
 #[cfg(target_family = "windows")]
-use std::os::windws::prelude::FileExt;
+use std::os::windows::prelude::FileExt;
 
 use rs_sqlite::{EXIT_FAILURE, PAGE_SIZE, ROWS_PER_PAGE, ROW_SIZE, TABLE_MAX_PAGES};
 
