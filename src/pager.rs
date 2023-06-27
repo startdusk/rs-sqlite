@@ -10,9 +10,10 @@ use rs_sqlite::{EXIT_FAILURE, PAGE_SIZE, ROWS_PER_PAGE, ROW_SIZE, TABLE_MAX_PAGE
 pub struct Pager {
     pub file_descriptor: File,
     pub file_length: usize,
-    pub pages: [Option<Page>; TABLE_MAX_PAGES],
+    pub pages: Vec<Option<Vec<u8>>>,
 }
 
+pub type RowLine = [u8; ROW_SIZE];
 pub type Page = [u8; PAGE_SIZE];
 
 impl Pager {
@@ -25,14 +26,15 @@ impl Pager {
             .open(filename)?;
 
         let file_length = file.metadata().unwrap().len() as usize;
+        let pages = vec![None; TABLE_MAX_PAGES];
         Ok(Self {
             file_descriptor: file,
             file_length,
-            pages: [None; TABLE_MAX_PAGES],
+            pages,
         })
     }
 
-    pub fn save_row(&mut self, row_num: usize, row: [u8; ROW_SIZE]) {
+    pub fn save_row(&mut self, row_num: usize, row: RowLine) {
         let page_num = self.page_num(row_num);
         if page_num > TABLE_MAX_PAGES {
             println!(
@@ -53,7 +55,7 @@ impl Pager {
 
         let mut page = self.get_page(row_num);
         page[offset..(row.len() + offset)].copy_from_slice(&row[..]);
-        self.pages[page_num] = Some(page);
+        self.pages[page_num] = Some(page.to_vec());
     }
 
     pub fn get_page(&mut self, row_num: usize) -> Page {
@@ -65,7 +67,8 @@ impl Pager {
             );
             exit(EXIT_FAILURE);
         }
-        let Some(page) = self.pages[page_num] else {
+        let mut tmp_page: Page = [0u8; PAGE_SIZE];
+        let Some(page) = &self.pages[page_num] else {
             // Cache miss. Allocate memory and load from file.
             let mut num_pages = self.file_length / PAGE_SIZE;
 
@@ -74,30 +77,30 @@ impl Pager {
                 num_pages += 1;
             }
             // 读取指定数据
-            let mut page: Page = [0u8; PAGE_SIZE];
             if num_pages > 0 && page_num <= num_pages {
                 let offset = (page_num * PAGE_SIZE) as u64;
                 #[cfg(target_family = "unix")]
-                self.file_descriptor.read_at(&mut page,  offset).unwrap();
+                self.file_descriptor.read_at(&mut tmp_page,  offset).unwrap();
                 #[cfg(target_family = "windows")]
-                self.file_descriptor.seek_read(&mut page,  offset).unwrap();
+                self.file_descriptor.seek_read(&mut tmp_page,  offset).unwrap();
             }
-            self.pages[page_num] = Some(page);
-            return page
+            self.pages[page_num] = Some(tmp_page.to_vec());
+            return tmp_page
         };
 
-        page
+        tmp_page[..page.len()].copy_from_slice(&page[..]);
+        tmp_page
     }
 
-    pub fn get_row(&mut self, row_num: usize) -> [u8; ROW_SIZE] {
+    pub fn get_row(&mut self, row_num: usize) -> RowLine {
         let page = self.get_page(row_num);
         let offset = self.offset(row_num);
         let select_data = page[offset..offset + ROW_SIZE].to_vec();
         let data_length = select_data.len();
-        let array: [u8; ROW_SIZE] = match select_data.try_into() {
+        let array: RowLine = match select_data.try_into() {
             Ok(ba) => ba,
             Err(_) => panic!(
-                "Expected a data of length {} but it was {}",
+                "Expected a row of length {} but it was {}",
                 ROW_SIZE, data_length,
             ),
         };

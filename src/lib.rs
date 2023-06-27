@@ -4,8 +4,8 @@ pub const EXIT_SUCCESS: i32 = 0;
 pub const EXIT_FAILURE: i32 = -1;
 pub const PAGE_SIZE: usize = 4096;
 
-// windows 的栈要比 unix 的要小, 所以windows下设为10, 而unix系统可以设为100大些
-pub const TABLE_MAX_PAGES: usize = 10;
+// windows 的栈要比 unix 的要小, 数组是在栈上分配, 改为vec在堆上分配
+pub const TABLE_MAX_PAGES: usize = 100;
 
 // ROW_SIZE = 291
 pub const ROW_SIZE: usize = <Row as BinarySerde>::MAX_SERIALIZED_SIZE;
