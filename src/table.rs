@@ -1,10 +1,9 @@
 use std::process::exit;
 
-use binary_serde::{BinarySerde, Endianness};
 use rs_sqlite::{to_u8_array, Row, EXIT_SUCCESS, ROW_SIZE, TABLE_MAX_ROWS};
 use scanf::sscanf;
 
-use crate::Pager;
+use crate::pager::Pager;
 
 enum ExecuteResult {
     TableFull,
@@ -53,8 +52,7 @@ impl Table {
             return ExecuteResult::NoExecute;
         };
 
-        let mut insert_data = [0u8; ROW_SIZE];
-        row.binary_serialize(&mut insert_data, Endianness::Little);
+        let insert_data = row.encode();
         self.pager.save_row(self.num_rows, insert_data);
 
         self.num_rows += 1;
@@ -64,7 +62,7 @@ impl Table {
     fn select(&mut self, _statement: &Statement) -> ExecuteResult {
         for i in 0..self.num_rows {
             let select_data = self.pager.get_row(i);
-            let row = Row::binary_deserialize(&select_data, Endianness::Little).unwrap();
+            let row = Row::from(&select_data).unwrap();
             println!("{}", row);
         }
 

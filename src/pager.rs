@@ -5,16 +5,13 @@ use std::os::unix::prelude::FileExt;
 #[cfg(target_family = "windows")]
 use std::os::windows::prelude::FileExt;
 
-use rs_sqlite::{EXIT_FAILURE, PAGE_SIZE, ROWS_PER_PAGE, ROW_SIZE, TABLE_MAX_PAGES};
+use rs_sqlite::{Page, RowLine, EXIT_FAILURE, PAGE_SIZE, ROWS_PER_PAGE, ROW_SIZE, TABLE_MAX_PAGES};
 
 pub struct Pager {
     pub file_descriptor: File,
     pub file_length: usize,
     pub pages: Vec<Option<Vec<u8>>>,
 }
-
-pub type RowLine = [u8; ROW_SIZE];
-pub type Page = [u8; PAGE_SIZE];
 
 impl Pager {
     pub fn open(filename: &str) -> std::io::Result<Self> {
@@ -43,6 +40,7 @@ impl Pager {
             );
             exit(EXIT_FAILURE);
         }
+
         let offset = self.offset(row_num);
 
         #[cfg(target_family = "unix")]
@@ -94,8 +92,9 @@ impl Pager {
 
     pub fn get_row(&mut self, row_num: usize) -> RowLine {
         let page = self.get_page(row_num);
-        let offset = self.offset(row_num);
-        let select_data = page[offset..offset + ROW_SIZE].to_vec();
+        let start = self.offset(row_num);
+        let end = start + ROW_SIZE;
+        let select_data = page[start..end].to_vec();
         let data_length = select_data.len();
         let array: RowLine = match select_data.try_into() {
             Ok(ba) => ba,

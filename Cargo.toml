@@ -9,3 +9,6 @@ edition = "2021"
 binary_serde = "0.1.0"
 scanf = "1.2.1"
 
+
+[dev-dependencies]
+assert_cmd = "2.0.11"
