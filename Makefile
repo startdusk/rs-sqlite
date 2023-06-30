@@ -2,6 +2,10 @@
 .PHONY: test
 test: fmt
 	@cargo nextest run
+
+.PHONY: testall
+testall: fmt
+	@cargo nextest run
 	@bundle exec rspec
 
 .PHONY: fmt
