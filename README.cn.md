@@ -27,3 +27,4 @@ $ bundle install
 # 7.执行测试(Default: Run all spec files (i.e., those matching spec/**/*_spec.rb))
 $ bundle exec rspec
 ```
+
